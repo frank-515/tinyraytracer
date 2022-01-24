@@ -4,7 +4,7 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
-
+#include <random>
 struct Light {
     vec3 position;
     float intensity;
@@ -75,7 +75,7 @@ bool scene_intersect(const vec3 &orig, const vec3 &dir, const std::vector<Sphere
 }
 
 vec3 cast_ray(const vec3 &orig, const vec3 &dir, const std::vector<Sphere> &spheres, const std::vector<Light> &lights, size_t depth=0) {
-    vec3 point, N;
+    vec3 point , N;
     Material material;
 
     if (depth>4 || !scene_intersect(orig, dir, spheres, point, N, material))
@@ -102,22 +102,61 @@ vec3 cast_ray(const vec3 &orig, const vec3 &dir, const std::vector<Sphere> &sphe
     return material.diffuse_color * diffuse_light_intensity * material.albedo[0] + vec3{1., 1., 1.}*specular_light_intensity * material.albedo[1] + reflect_color*material.albedo[2] + refract_color*material.albedo[3];
 }
 
+void save(std::vector<vec3> framebuffer, const int width, const int height, std::string filename = "out.ppm"){
+    std::ofstream ofs; // save the framebuffer to file
+    filename = "./" + filename;
+    ofs.open("./out.ppm", std::ios::binary);
+    ofs << "P6\n" << width << " " << height << "\n255\n";
+    for (vec3 &c : framebuffer) {
+        float max = std::max(c[0], std::max(c[1], c[2]));
+        if (max>1) c = c*(1./max);
+        ofs << (char)(255 * c[0]) << (char)(255 * c[1]) << (char)(255 * c[2]);
+    }
+    ofs.close();
+}
+
+void rander_monte_carlo(const std::vector<Sphere> &spheres, const std::vector<Light> &lights){
+    const int   width    = 1920;
+    const int   height   = 1080;
+    const float fov      = 1.;
+    std::vector<vec3> framebuffer(width*height);
+    std::vector<int>  hit(width*height, 0);
+    const int samples = 1920 * 1080 * 256;
+    std::random_device rd;
+    std::default_random_engine eng(rd());
+    std::uniform_real_distribution<float> w_rand(0, width);
+    std::uniform_real_distribution<float> h_rand(0, height);
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < samples; i++){
+        float rx = w_rand(eng);
+        float ry = h_rand(eng);
+        int index = (int)(rx) + (int)(ry) * width;
+        hit[index]++;
+        float dir_x =  (rx + 0.5) -  width/2.;
+        float dir_y = -(ry + 0.5) + height/2.;    // this flips the image at the same time
+        float dir_z = -height/(2.*tan(fov/2.));
+        framebuffer[index] = framebuffer[index] + cast_ray(vec3{0, 0, 0}, vec3{dir_x, dir_y, dir_z}.normalize(), spheres, lights);
+    }
+
+    for (int index = 0; auto t : hit){
+        if (t == 0 || t == 1) {
+            index++;
+            continue;
+        }
+        framebuffer[index] = framebuffer[index] * (float) (1.0 / t);
+        index++;
+    }
+    save(framebuffer, width, height);
+}
+
 void render(const std::vector<Sphere> &spheres, const std::vector<Light> &lights) {
-    const int   width    = 1024;
-    const int   height   = 768;
-    const float fov      = M_PI/3.;
+    const int   width    = 1920;
+    const int   height   = 1080;
+    const float fov      = 1.;
     std::vector<vec3> framebuffer(width*height);
 
-    // #pragma omp parallel for
-    // for (size_t j = 0; j<height; j++) { // actual rendering loop
-    //     for (size_t i = 0; i<width; i++) {
-    //         float dir_x =  (i + 0.5) -  width/2.;
-    //         float dir_y = -(j + 0.5) + height/2.;    // this flips the image at the same time
-    //         float dir_z = -height/(2.*tan(fov/2.));
-    //         framebuffer[i+j*width] = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalize(), spheres, lights);
-    //     }
-    // }
-    const int AA_index = 16;
+    const int AA_index = 2;
     const float r = 1.0 / AA_index;
     #pragma omp parallel for
     for (size_t j = 0; j<height; j++) { // actual rendering loop
@@ -137,15 +176,7 @@ void render(const std::vector<Sphere> &spheres, const std::vector<Light> &lights
         }
     }
 
-    std::ofstream ofs; // save the framebuffer to file
-    ofs.open("./out.ppm", std::ios::binary);
-    ofs << "P6\n" << width << " " << height << "\n255\n";
-    for (vec3 &c : framebuffer) {
-        float max = std::max(c[0], std::max(c[1], c[2]));
-        if (max>1) c = c*(1./max);
-        ofs << (char)(255 * c[0]) << (char)(255 * c[1]) << (char)(255 * c[2]);
-    }
-    ofs.close();
+    save(framebuffer, width, height);
 }
 
 int main() {
@@ -168,6 +199,7 @@ int main() {
     };
 
     render(spheres, lights);
+    //rander_monte_carlo(spheres, lights);
     system("pnmtopng out.ppm > out.png");
     system("rm out.ppm");
     return 0;
