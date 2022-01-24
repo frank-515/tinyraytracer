@@ -108,13 +108,32 @@ void render(const std::vector<Sphere> &spheres, const std::vector<Light> &lights
     const float fov      = M_PI/3.;
     std::vector<vec3> framebuffer(width*height);
 
+    // #pragma omp parallel for
+    // for (size_t j = 0; j<height; j++) { // actual rendering loop
+    //     for (size_t i = 0; i<width; i++) {
+    //         float dir_x =  (i + 0.5) -  width/2.;
+    //         float dir_y = -(j + 0.5) + height/2.;    // this flips the image at the same time
+    //         float dir_z = -height/(2.*tan(fov/2.));
+    //         framebuffer[i+j*width] = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalize(), spheres, lights);
+    //     }
+    // }
+    const int AA_index = 16;
+    const float r = 1.0 / AA_index;
     #pragma omp parallel for
     for (size_t j = 0; j<height; j++) { // actual rendering loop
         for (size_t i = 0; i<width; i++) {
-            float dir_x =  (i + 0.5) -  width/2.;
-            float dir_y = -(j + 0.5) + height/2.;    // this flips the image at the same time
-            float dir_z = -height/(2.*tan(fov/2.));
-            framebuffer[i+j*width] = cast_ray(vec3{0,0,0}, vec3{dir_x, dir_y, dir_z}.normalize(), spheres, lights);
+            vec3 pix = {0, 0, 0};
+            for (float k = -0.5; k < 0.5; k += r) {
+                for (float l = -0.5; l < 0.5; l += r){
+                    float dir_x =  (i + 0.5 + k) -  width/2.;
+                    float dir_y = -(j + 0.5 + l) + height/2.;    // this flips the image at the same time
+                    float dir_z = -height/(2.*tan(fov/2.));
+                    pix = pix + cast_ray(vec3{0, 0, 0}, vec3{dir_x, dir_y, dir_z}.normalize(), spheres, lights);
+                }
+            }
+
+            
+            framebuffer[i+j*width] = pix * pow(AA_index, -2);
         }
     }
 
@@ -149,6 +168,8 @@ int main() {
     };
 
     render(spheres, lights);
+    system("pnmtopng out.ppm > out.png");
+    system("rm out.ppm");
     return 0;
 }
 
